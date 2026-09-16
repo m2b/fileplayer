@@ -1,0 +1,64 @@
+services:
+  fileplayer:
+    build:
+      context: .
+    image: fileplayer:latest
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # The asset hierarchy (--root) and playlist are host data, not part of
+      # the image - change device CSVs or playlist rows by editing what's at
+      # these host paths (or pointing ASSETS_DIR/PLAYLIST_FILE elsewhere) and
+      # restarting the container, with no rebuild needed. They default to
+      # the bundled sample_data/sample_playlist.csv purely so this works out
+      # of the box; point ASSETS_DIR/PLAYLIST_FILE at your own data for real
+      # use (paths are resolved relative to this file if relative, e.g. via
+      # a .env next to it).
+      - ${ASSETS_DIR:-./sample_data}:/data/assets:ro
+      - ${PLAYLIST_FILE:-./sample_playlist.csv}:/data/playlist.csv:ro
+      # Durable playback state (StateStore) - survives container restarts
+      # and redeploys, so the player resumes mid-file instead of re-syncing
+      # to "now" every time. Without this volume, state resets on every
+      # container recreate.
+      - fileplayer-state:/data/state
+      # Daily-rotating application log file (see --log-dir), kept 3 days.
+      # Bind-mounted (not a named volume) so it's directly browsable on the
+      # host; defaults to ./logs next to this file.
+      - ${LOGS_DIR:-./logs}:/data/logs
+    # Bounds Docker's own capture of this container's stdout/stderr - a
+    # separate, complementary limit to --log-dir's own 3-day rotation below,
+    # since that's size-based (not day-based) and covers the raw console
+    # stream rather than the application's own log file.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command:
+      - "--root"
+      - "/data/assets"
+      - "--playlist"
+      - "/data/playlist.csv"
+      - "--default-speed"
+      - "${DEFAULT_SPEED:-1.0}"
+      - "--tick"
+      - "${TICK:-0.2}"
+      - "--state-file"
+      - "/data/state/fileplayer_state.json"
+      - "--serve-api"
+      - "--api-host"
+      - "0.0.0.0"
+      - "--api-port"
+      - "8000"
+      - "--websocket-url"
+      - "${WEBSOCKET_URL:?Set WEBSOCKET_URL in a .env file or the environment, e.g. ws://host:1880/ingest}"
+      - "--websocket-retry-delay"
+      - "${WEBSOCKET_RETRY_DELAY:-5.0}"
+      - "--log-level"
+      - "${LOG_LEVEL:-INFO}"
+      - "--log-dir"
+      - "/data/logs"
+
+volumes:
+  fileplayer-state:

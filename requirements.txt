@@ -1,0 +1,9 @@
+# The core package (timeseries_file, asset_browser, state_store, player,
+# StdoutListener) is pure standard library on purpose, so it stays trivial
+# to lift into its own repo. Everything below is needed for the optional
+# pieces this deployment actually uses: WebSocketListener (--websocket-url)
+# and the in-process API server (--serve-api, api_server.py). See
+# requirements-dev.txt for test-only dependencies.
+fastapi
+uvicorn
+websockets

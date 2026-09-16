@@ -1,0 +1,4 @@
+device,speed
+AcmeCorp/West/PlantA/Line1/Press1,5000
+AcmeCorp/West/PlantA/Line1/Press2,10000
+AcmeCorp/West/PlantB/Boiler1,2000

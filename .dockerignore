@@ -1,0 +1,16 @@
+.git/
+tests/
+demo/
+sample_data/
+sample_playlist.csv
+logs/
+requirements-dev.txt
+README.md
+LICENSE
+deploy.sh
+deploy.ps1
+**/__pycache__/
+*.pyc
+.pytest_cache/
+fileplayer_state*.json
+*.tmp

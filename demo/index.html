@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Player Live View</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --border: #ddd;
+    --panel: #f7f7f8;
+    --accent: #3366cc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --fg: #e8e8e8;
+      --muted: #9a9a9a;
+      --border: #333;
+      --panel: #1f222a;
+      --accent: #6fa8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex;
+    height: 100vh;
+  }
+  #tree-pane {
+    width: 320px;
+    min-width: 240px;
+    max-width: 50vw;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    padding: 12px;
+  }
+  #tree-pane h1 {
+    font-size: 15px;
+    margin: 0 0 10px;
+  }
+  #connect-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  #player-url {
+    flex: 1;
+    min-width: 0;
+    font: 12px monospace;
+    padding: 4px 6px;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  #connect-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  #status {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  #status.connected { color: #2a9d4a; }
+  #status.disconnected { color: #cc3333; }
+  ul.tree, ul.tree ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 16px;
+  }
+  ul.tree { padding-left: 0; }
+  .node-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .node-row .twisty {
+    width: 12px;
+    display: inline-block;
+    color: var(--muted);
+    user-select: none;
+  }
+  .node-row.device { cursor: default; }
+  .node-row.device .name { cursor: pointer; }
+  .node-row .name:hover { color: var(--accent); }
+  #main-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  #main-pane h1 {
+    font-size: 15px;
+    margin: 0 0 12px;
+  }
+  #empty-hint {
+    color: var(--muted);
+  }
+  .device-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--panel);
+  }
+  .device-card h2 {
+    font-size: 14px;
+    margin: 0 0 4px;
+    font-family: monospace;
+  }
+  .device-card .ts {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .badge {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-family: monospace;
+    background: var(--bg);
+  }
+  .charts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chart {
+    width: 320px;
+    height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+  }
+</style>
+</head>
+<body>
+<div id="tree-pane">
+  <h1>File Player Demo</h1>
+  <div id="connect-bar">
+    <input id="player-url" type="text" placeholder="http://localhost:8000" spellcheck="false">
+    <button id="connect-btn">Connect</button>
+  </div>
+  <div id="status" class="disconnected">not connected</div>
+  <ul class="tree" id="tree-root"></ul>
+</div>
+<div id="main-pane">
+  <h1>Live values</h1>
+  <div id="empty-hint">Select devices on the left to see their values here.</div>
+  <div id="devices"></div>
+</div>
+
+<script>
+const MAX_POINTS = 300;
+const DEFAULT_URL = 'http://localhost:8000';
+const STORAGE_KEY = 'fileplayer-demo-url';
+
+const state = {
+  baseUrl: null,
+  selected: new Set(),        // device paths currently subscribed to
+  data: new Map(),            // device path -> { metric -> [[ts, value], ...] }
+  charts: new Map(),          // device path -> { metric -> echarts instance }
+  latestNonNumeric: new Map(),// device path -> { metric -> value }
+};
+
+let ws = null;
+
+// ---------- connecting to a player ----------
+
+function loadSavedUrl() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) || DEFAULT_URL;
+  } catch (e) {
+    return DEFAULT_URL;
+  }
+}
+
+function saveUrl(url) {
+  try {
+    localStorage.setItem(STORAGE_KEY, url);
+  } catch (e) {
+    // ignore - browser storage unavailable (private mode, etc.)
+  }
+}
+
+function connectToPlayer() {
+  const input = document.getElementById('player-url');
+  let url = input.value.trim() || DEFAULT_URL;
+  url = url.replace(/\/+$/, '');
+  input.value = url;
+  saveUrl(url);
+
+  if (ws) {
+    ws.onclose = null; // don't auto-reconnect the old connection
+    ws.close();
+  }
+
+  state.baseUrl = url;
+  state.selected.clear();
+  state.data.clear();
+  state.charts.clear();
+  state.latestNonNumeric.clear();
+  document.getElementById('tree-root').innerHTML = '';
+  document.getElementById('devices').innerHTML = '';
+  document.getElementById('empty-hint').style.display = '';
+
+  loadTree();
+  connectWebSocket();
+}
+
+// ---------- tree browsing ----------
+
+async function fetchChildren(path) {
+  const res = await fetch(`${state.baseUrl}/api/tree?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(`failed to load ${path}`);
+  return res.json();
+}
+
+async function renderNode(container, node) {
+  const li = document.createElement('li');
+  const row = document.createElement('div');
+  row.className = 'node-row' + (node.is_device ? ' device' : '');
+
+  if (node.is_device) {
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.addEventListener('change', () => toggleDevice(node.path, checkbox.checked));
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = node.name;
+    name.addEventListener('click', () => { checkbox.checked = !checkbox.checked; toggleDevice(node.path, checkbox.checked); });
+    row.appendChild(checkbox);
+    row.appendChild(name);
+    li.appendChild(row);
+  } else {
+    const twisty = document.createElement('span');
+    twisty.className = 'twisty';
+    twisty.textContent = '▸';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = node.name;
+    row.appendChild(twisty);
+    row.appendChild(name);
+    li.appendChild(row);
+
+    const childList = document.createElement('ul');
+    childList.className = 'tree';
+    childList.style.display = 'none';
+    li.appendChild(childList);
+
+    let loaded = false;
+    row.addEventListener('click', async () => {
+      const expanded = childList.style.display !== 'none';
+      if (expanded) {
+        childList.style.display = 'none';
+        twisty.textContent = '▸';
+        return;
+      }
+      if (!loaded) {
+        loaded = true;
+        const children = await fetchChildren(node.path);
+        for (const child of children) {
+          await renderNode(childList, child);
+        }
+      }
+      childList.style.display = '';
+      twisty.textContent = '▾';
+    });
+  }
+
+  container.appendChild(li);
+}
+
+async function loadTree() {
+  const root = document.getElementById('tree-root');
+  const requestedUrl = state.baseUrl;
+  let children;
+  try {
+    children = await fetchChildren('');
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  if (state.baseUrl !== requestedUrl) return; // a newer connect() superseded this load
+  for (const child of children) {
+    await renderNode(root, child);
+  }
+}
+
+// ---------- device selection ----------
+
+function toggleDevice(path, selected) {
+  if (selected) {
+    state.selected.add(path);
+    ensureDeviceCard(path);
+  } else {
+    state.selected.delete(path);
+    removeDeviceCard(path);
+  }
+  document.getElementById('empty-hint').style.display = state.selected.size ? 'none' : '';
+  sendSubscriptions();
+}
+
+function ensureDeviceCard(path) {
+  if (document.getElementById(cardId(path))) return;
+  const devices = document.getElementById('devices');
+  const card = document.createElement('div');
+  card.className = 'device-card';
+  card.id = cardId(path);
+  card.innerHTML = `
+    <h2>${escapeHtml(path)}</h2>
+    <div class="ts">waiting for data…</div>
+    <div class="badges"></div>
+    <div class="charts"></div>
+  `;
+  devices.appendChild(card);
+  state.data.set(path, {});
+  state.charts.set(path, {});
+  state.latestNonNumeric.set(path, {});
+}
+
+function removeDeviceCard(path) {
+  const card = document.getElementById(cardId(path));
+  if (card) card.remove();
+  state.data.delete(path);
+  state.charts.delete(path);
+  state.latestNonNumeric.delete(path);
+}
+
+function cardId(path) {
+  return 'device-' + path.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// ---------- rendering incoming events ----------
+
+function handleEvent(event) {
+  const { device, metrics, timestamp } = event;
+  if (!state.selected.has(device)) return;
+  ensureDeviceCard(device);
+
+  const card = document.getElementById(cardId(device));
+  card.querySelector('.ts').textContent = 'last update: ' + new Date(timestamp).toLocaleTimeString();
+
+  const deviceData = state.data.get(device);
+  const nonNumeric = state.latestNonNumeric.get(device);
+  let nonNumericChanged = false;
+
+  for (const [metric, value] of Object.entries(metrics || {})) {
+    if (typeof value === 'number') {
+      if (!deviceData[metric]) deviceData[metric] = [];
+      const series = deviceData[metric];
+      series.push([timestamp, value]);
+      if (series.length > MAX_POINTS) series.shift();
+      updateChart(device, metric, series);
+    } else {
+      nonNumeric[metric] = value;
+      nonNumericChanged = true;
+    }
+  }
+
+  if (nonNumericChanged) renderBadges(device, nonNumeric);
+}
+
+function renderBadges(device, nonNumeric) {
+  const card = document.getElementById(cardId(device));
+  const badges = card.querySelector('.badges');
+  badges.innerHTML = '';
+  for (const [metric, value] of Object.entries(nonNumeric)) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = `${metric}: ${value}`;
+    badges.appendChild(badge);
+  }
+}
+
+function updateChart(device, metric, series) {
+  const card = document.getElementById(cardId(device));
+  const deviceCharts = state.charts.get(device);
+  let chart = deviceCharts[metric];
+  if (!chart) {
+    const div = document.createElement('div');
+    div.className = 'chart';
+    card.querySelector('.charts').appendChild(div);
+    chart = echarts.init(div);
+    chart.setOption({
+      title: { text: metric, textStyle: { fontSize: 12 } },
+      grid: { left: 45, right: 15, top: 30, bottom: 30 },
+      xAxis: { type: 'time', axisLabel: { fontSize: 9 } },
+      yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 9 } },
+      series: [{ type: 'line', showSymbol: false, data: [] }],
+    });
+    deviceCharts[metric] = chart;
+  }
+  chart.setOption({ series: [{ data: series }] });
+}
+
+// ---------- websocket subscription channel ----------
+
+function connectWebSocket() {
+  const requestedUrl = state.baseUrl;
+  const wsUrl = state.baseUrl.replace(/^http/, 'ws') + '/ws/subscribe';
+  const socket = new WebSocket(wsUrl);
+  ws = socket;
+  const status = document.getElementById('status');
+
+  socket.addEventListener('open', () => {
+    if (state.baseUrl !== requestedUrl) { socket.close(); return; }
+    status.textContent = `connected to ${state.baseUrl}`;
+    status.className = 'connected';
+    sendSubscriptions();
+  });
+  socket.addEventListener('message', (msg) => {
+    if (state.baseUrl !== requestedUrl) return;
+    try {
+      handleEvent(JSON.parse(msg.data));
+    } catch (e) {
+      console.error('bad event', e);
+    }
+  });
+  socket.addEventListener('close', () => {
+    if (state.baseUrl !== requestedUrl) return; // superseded by a newer connect()
+    status.textContent = 'disconnected - retrying…';
+    status.className = 'disconnected';
+    setTimeout(() => { if (state.baseUrl === requestedUrl) connectWebSocket(); }, 2000);
+  });
+  socket.addEventListener('error', () => socket.close());
+}
+
+function sendSubscriptions() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ devices: Array.from(state.selected) }));
+  }
+}
+
+window.addEventListener('resize', () => {
+  for (const deviceCharts of state.charts.values()) {
+    for (const chart of Object.values(deviceCharts)) {
+      chart.resize();
+    }
+  }
+});
+
+document.getElementById('connect-btn').addEventListener('click', connectToPlayer);
+document.getElementById('player-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') connectToPlayer();
+});
+
+document.getElementById('player-url').value = loadSavedUrl();
+connectToPlayer();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Local runtime artifacts - never meant to be committed
+.env
+logs/
+fileplayer_state*.json
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
