@@ -9,6 +9,7 @@ README.md
 LICENSE
 deploy.sh
 deploy.ps1
+deploy_service.sh
 **/__pycache__/
 *.pyc
 .pytest_cache/

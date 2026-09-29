@@ -24,11 +24,13 @@ cd fileplayer
 python -m venv .venv && source .venv/bin/activate   # .venv\Scripts\activate on Windows
 pip install -r requirements-dev.txt
 python -m pytest tests                                # 43 tests, should all pass
-python -m publisher.player_cli --root sample_data --default-speed 20000 --tick 0.1
+python -m publisher.player_cli --root sample_data --websocket-url ws://localhost:1880/ingest --default-speed 20000 --tick 0.1 --log-level DEBUG
 ```
 That last command plays the bundled demo asset hierarchy (`sample_data/`)
-fast enough to see rows advance within a few seconds, printing each
-published event as JSON to stdout. Ctrl+C to stop.
+fast enough to see rows advance within a few seconds, publishing each
+event to the given websocket url and (with `--log-level DEBUG`) logging it
+as JSON. `--websocket-url` is required; if nothing is listening there the
+player logs connection warnings and keeps retrying. Ctrl+C to stop.
 
 ## Data model
 
@@ -111,13 +113,13 @@ column). Only JSON is supported today; BSON/protobuf are future work.
 ## CLI
 
 ```
-python -m publisher.player_cli --root sample_data --default-speed 1.0
+python -m publisher.player_cli --root sample_data --websocket-url ws://host:1880/ingest --default-speed 1.0
 ```
 
 This is one generic launcher for the player, not a per-protocol script:
 which publishers run is picked by flags, each backed by an `EventListener`
-subclass. Today that's stdout, a remote websocket, and/or the in-process
-API server; a future OPC UA or MQTT publisher is expected to plug in the
+subclass. Today that's a remote websocket (always on, `--websocket-url` is
+required), plus stdout and/or the in-process API server; a future OPC UA or MQTT publisher is expected to plug in the
 same way (a new flag, a new `EventListener` subclass, lazily imported so
 its dependency is only needed when that flag is used) rather than getting
 its own copy of this script.
@@ -132,10 +134,10 @@ Options:
   `./fileplayer_state.json`).
 - `--tick` - main loop interval in seconds (default `0.2`).
 - `--log-level` - `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`.
-- `--no-stdout` - don't print events to stdout.
-- `--websocket-url` - root websocket url to also publish to via
+- `--websocket-url` (required) - root websocket url to publish to via
   `WebSocketListener` (see above), e.g. `ws://host:1880/ingest`, for
   pushing to a remote/downstream system.
+- `--no-stdout` - don't log events at DEBUG level.
 - `--websocket-retry-delay` - seconds to wait after a failed websocket
   connect/send before it's retried (default `5.0`).
 - `--serve-api` - also serve the browsing + live-subscribe API described
@@ -147,7 +149,7 @@ Try it against the bundled sample hierarchy at a speed fast enough to see
 rows advance within a few seconds:
 
 ```
-python -m publisher.player_cli --root sample_data --default-speed 20000 --tick 0.1
+python -m publisher.player_cli --root sample_data --websocket-url ws://localhost:1880/ingest --default-speed 20000 --tick 0.1
 ```
 
 ## Demo frontend
@@ -162,7 +164,7 @@ currently looking at.
 Start the player with its API turned on:
 
 ```
-python -m publisher.player_cli --root sample_data --default-speed 20000 --serve-api --api-port 8000
+python -m publisher.player_cli --root sample_data --websocket-url ws://localhost:1880/ingest --default-speed 20000 --serve-api --api-port 8000
 ```
 
 Serve the demo page itself (it needs to be fetched over http(s), not
@@ -196,12 +198,12 @@ Needs `fastapi`, `uvicorn`, and `websockets` (see `requirements.txt`).
 ## Docker deployment
 
 `Dockerfile` and `docker-compose.yml` deploy a specific configuration: a
-player that always uses `--playlist`, `--serve-api`, and `--websocket-url`
-together - continuously publishing the bundled sample hierarchy out over a
+player that always uses `--playlist` and `--serve-api` alongside the
+required `--websocket-url` - continuously publishing the bundled sample hierarchy out over a
 websocket, while also serving the `demo/` frontend's API for watching it
-live. The underlying `player_cli.py` itself stays generic (none of those
-flags are hard-required in code) - this is a deployment choice, not a
-constraint of the tool.
+live. Of those, only `--websocket-url` is required by `player_cli.py` itself;
+`--playlist` and `--serve-api` are a deployment choice, not a constraint
+of the tool.
 
 Build context is this directory, so the image only ever depends on what's
 in this self-contained package:
@@ -269,6 +271,30 @@ feature, or Git for Windows'; `tar` has shipped in Windows itself since 10
 1803) and transfers via `tar` piped over `ssh` - one connection for the
 whole sync rather than one per file. Neither touches anything until you
 actually run it against a real target.
+
+## Systemd deployment (no docker)
+
+`deploy_service.sh` installs the same configuration as `docker-compose.yml`
+as a systemd service instead, running straight out of a copy of this repo
+on a Linux host. Copy the files over (e.g. with `deploy.sh`, which leaves
+the remote `.venv` alone), then on the host, from that directory:
+
+```
+bash deploy_service.sh ws://host:1880/ingest
+```
+
+It creates a venv in `./.venv` and installs `requirements.txt` into it
+(or, with `USE_VENV=0`, uses `python3` - or `PYTHON` - as-is, which must
+already have those packages), writes
+`/etc/systemd/system/fileplayer.service` (running as the invoking user),
+and enables and (re)starts it - asking for the websocket url if you don't
+pass it. It uses `sudo` for the unit and `systemctl`. The same settings as
+`.env.example` (`ASSETS_DIR`, `PLAYLIST_FILE`, `API_PORT`, `DEFAULT_SPEED`,
+`TICK`, `WEBSOCKET_RETRY_DELAY`, `LOG_LEVEL`, `LOGS_DIR`), plus
+`SERVICE_NAME`, `SERVICE_USER` and `STATE_FILE`, can be overridden as env
+vars; see the top of the script. Re-run it after redeploying files to pick
+them up. Logs go to the journal (`journalctl -u fileplayer -f`) and to
+`./logs/fileplayer.log`.
 
 ## Tests
 

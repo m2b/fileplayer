@@ -91,6 +91,7 @@ echo "==> syncing ${SCRIPT_DIR}/ to ${REMOTE_TARGET}:${REMOTE_DIR}/"
 export RSYNC_RSH="ssh ${SSH_OPTS[*]}"
 rsync -az --delete \
   --exclude='.git' \
+  --exclude='.venv' \
   --exclude='__pycache__' \
   --exclude='.pytest_cache' \
   --exclude='tests' \

@@ -89,7 +89,7 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-$ExcludeDirs = @(".git", "__pycache__", ".pytest_cache", "tests", "demo", "logs")
+$ExcludeDirs = @(".git", ".venv", "__pycache__", ".pytest_cache", "tests", "demo", "logs")
 
 Push-Location $ScriptDir
 try {

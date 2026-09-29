@@ -52,6 +52,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--websocket-url",
+        required=True,
         help="Root websocket url to publish to, e.g. ws://host:1880/ingest - each device's "
         "hierarchical path is appended to it to form that device's own endpoint",
     )
@@ -64,8 +65,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-stdout",
         action="store_true",
-        help="Don't log events at DEBUG level (has no effect unless --log-level DEBUG and another listener, "
-        "e.g. --websocket-url, is set)",
+        help="Don't log events at DEBUG level (has no effect unless --log-level DEBUG)",
     )
     parser.add_argument(
         "--log-dir",
@@ -103,10 +103,10 @@ async def _run(args: argparse.Namespace) -> None:
     listeners: list[EventListener] = []
     if not args.no_stdout:
         listeners.append(StdoutListener())
-    if args.websocket_url:
-        from .websocket_listener import WebSocketListener
+    from .websocket_listener import WebSocketListener
 
-        listeners.append(WebSocketListener(args.websocket_url, retry_delay_s=args.websocket_retry_delay))
+    listeners.append(WebSocketListener(args.websocket_url, retry_delay_s=args.websocket_retry_delay))
+    logger.info("publishing to %s", args.websocket_url)
 
     uv_server = None
     if args.serve_api:
@@ -122,9 +122,6 @@ async def _run(args: argparse.Namespace) -> None:
         uv_server = uvicorn.Server(uvicorn.Config(app, host=args.api_host, port=args.api_port, log_level=args.log_level.lower()))
         logger.info("serving api on http://%s:%d", args.api_host, args.api_port)
 
-    if not listeners:
-        logger.error("no listeners configured - remove --no-stdout or set --websocket-url/--serve-api")
-        sys.exit(1)
     player = FilePlayer(files, listeners, state_store=state_store, tick_interval=args.tick)
 
     def _stop(*_args: object) -> None:
