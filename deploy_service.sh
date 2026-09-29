@@ -7,12 +7,14 @@
 # Usage:
 #   bash deploy_service.sh [websocket_url]
 # The websocket url is required: pass it as the argument, or set
-# WEBSOCKET_URL, or you're prompted for it.
+# WEBSOCKET_URL (in the environment or .env), or you're prompted for it.
 #
 # Same configuration as docker-compose.yml: --playlist, --serve-api and
-# --websocket-url, with durable state and a daily-rotating log file. The
-# same settings are overridable as env vars (defaults in brackets; relative
-# paths are relative to this directory):
+# --websocket-url, with durable state and a daily-rotating log file. Like
+# compose, it reads a .env next to this script (see .env.example), so one
+# .env serves both. The same settings are overridable in .env or as env vars,
+# which take precedence over .env (defaults in brackets; relative paths are
+# relative to this directory):
 #   SERVICE_NAME [fileplayer]      SERVICE_USER [you - or SUDO_USER under sudo]
 #   ASSETS_DIR [./sample_data]     PLAYLIST_FILE [./sample_playlist.csv]
 #   STATE_FILE [./fileplayer_state.json]    LOGS_DIR [./logs]
@@ -37,6 +39,27 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+
+# Reads ./.env the way docker compose does: KEY=VALUE lines, # comments,
+# optional surrounding quotes. It's parsed rather than sourced, since
+# compose's .env syntax isn't bash. Variables already set in the
+# environment win over the file, as with compose.
+if [[ -f .env ]]; then
+  echo "==> reading settings from ${SCRIPT_DIR}/.env"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]] || continue
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    else
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+    fi
+    [[ -v "$key" ]] || printf -v "$key" '%s' "$value"
+  done <.env
+fi
 
 WEBSOCKET_URL="${1:-${WEBSOCKET_URL:-}}"
 if [[ -z "$WEBSOCKET_URL" ]]; then

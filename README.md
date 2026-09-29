@@ -291,7 +291,8 @@ and enables and (re)starts it - asking for the websocket url if you don't
 pass it. It uses `sudo` for the unit and `systemctl`. The same settings as
 `.env.example` (`ASSETS_DIR`, `PLAYLIST_FILE`, `API_PORT`, `DEFAULT_SPEED`,
 `TICK`, `WEBSOCKET_RETRY_DELAY`, `LOG_LEVEL`, `LOGS_DIR`), plus
-`SERVICE_NAME`, `SERVICE_USER` and `STATE_FILE`, can be overridden as env
+`SERVICE_NAME`, `SERVICE_USER` and `STATE_FILE`, are read from a `.env`
+next to the script, the same one compose uses, or can be overridden as env
 vars; see the top of the script. Re-run it after redeploying files to pick
 them up. Logs go to the journal (`journalctl -u fileplayer -f`) and to
 `./logs/fileplayer.log`.
